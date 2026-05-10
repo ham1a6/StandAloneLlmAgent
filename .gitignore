@@ -31,3 +31,6 @@ models/
 # OS
 .DS_Store
 Thumbs.db
+
+# Tmp
+tmp
