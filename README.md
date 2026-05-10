@@ -130,11 +130,17 @@ def fetch_url(url: str) -> str:
 ## 開発
 
 ```bash
-# テストの実行
+# ユニットテスト（Ollama 不要）
 python -m pytest tests/ -v
 
-# 特定のテストのみ
-python -m pytest tests/test_core.py -v
+# 結合テスト（Ollama 起動が必要）
+python -m pytest tests/test_integration.py -v
+
+# 結合テストのみを選択実行
+python -m pytest -m integration -v
+
+# 結合テストを除いて実行
+python -m pytest -m "not integration" -v
 ```
 
 ## アーキテクチャ

@@ -23,3 +23,6 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: Ollama を必要とする結合テスト（ollama serve が必要）",
+]
