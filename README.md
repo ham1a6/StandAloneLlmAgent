@@ -28,10 +28,10 @@ cd StandAloneLlmAgent
 python -m venv .venv
 
 # Windows
-.venv\Scripts\pip install httpx rich pyyaml pydantic
+.venv\Scripts\pip install httpx rich pyyaml pydantic prompt_toolkit
 
 # Mac / Linux
-.venv/bin/pip install httpx rich pyyaml pydantic
+.venv/bin/pip install httpx rich pyyaml pydantic prompt_toolkit
 
 # 3. Ollama のインストールとモデルの取得
 ollama pull qwen2.5-coder:7b   # 推奨（コーディング特化）
@@ -51,10 +51,12 @@ python -m cli.app
 
 ```
 ╔══════════════════════════════════════╗
-║  StandAlone LLM Agent  [qwen2.5-coder:7b] ║
+║  StandAlone LLM Agent  [llama3.1:8b] ║
 ╚══════════════════════════════════════╝
 
-> このディレクトリの Python ファイルを一覧して
+Enter で改行 / Shift+Enter で送信
+
+> このディレクトリの Python ファイルを一覧して  ← Shift+Enter で送信
   [Tool: glob(pattern='**/*.py', path='.')]
   → agent/__init__.py
     agent/core.py

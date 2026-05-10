@@ -2,7 +2,9 @@ from __future__ import annotations
 import sys
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt
+from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.formatted_text import HTML
 
 import tools  # noqa: F401 — must be imported before ToolDispatcher() to register all tools
 from config.settings import load_settings, Settings
@@ -11,6 +13,21 @@ from tools.registry import ToolDispatcher
 from agent.core import Agent
 
 console = Console()
+
+
+def _build_session() -> PromptSession:
+    kb = KeyBindings()
+
+    @kb.add("s-enter")
+    def _submit(event):
+        event.current_buffer.validate_and_handle()
+
+    return PromptSession(
+        message=HTML("<ansigreen><b>&gt;</b></ansigreen> "),
+        multiline=True,
+        key_bindings=kb,
+        prompt_continuation=lambda width, line_number, soft_wrap: "  ",
+    )
 
 
 def _make_agent(settings: Settings) -> Agent:
@@ -66,10 +83,13 @@ def main() -> None:
             sys.exit(1)
 
     agent = _make_agent(settings)
+    session = _build_session()
+
+    console.print("[dim]Enter で改行 / Shift+Enter で送信[/dim]")
 
     while True:
         try:
-            user_input = Prompt.ask("\n[bold green]>[/bold green]")
+            user_input = session.prompt()
         except (KeyboardInterrupt, EOFError):
             console.print("\n[dim]終了します[/dim]")
             break
