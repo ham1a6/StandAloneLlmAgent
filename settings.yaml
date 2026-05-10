@@ -1,0 +1,31 @@
+backend: ollama               # ollama | llamacpp
+
+ollama:
+  # Ollama は HTTP で通信するため base_url を変えるだけでローカル・別サーバーを切り替えられる
+  # ローカル動作 (同一マシン):  http://localhost:11434
+  # LAN 内の別サーバー:         http://192.168.1.100:11434  ← インターネット不要
+  # ※ クラウドサーバーはオフライン運用の対象外
+  base_url: http://localhost:11434
+  model: qwen2.5-coder:7b
+  temperature: 0.2
+  context_window: 32768
+
+llamacpp:
+  model_path: ./models/qwen2.5-coder-7b.Q4_K_M.gguf
+  n_gpu_layers: -1            # -1 = すべて GPU に乗せる
+  n_ctx: 32768
+  temperature: 0.2
+
+agent:
+  max_steps: 30
+  context_strategy: sliding   # sliding | summarize (summarize は Phase 3)
+
+tools:
+  shell:
+    enabled: true
+    timeout: 60               # 秒
+    allowed_commands: []      # 空 = すべて許可
+
+permissions:
+  require_confirm_before_write: true   # ファイル書き込み前に確認 (Phase 2 で有効化)
+  require_confirm_before_shell: false
