@@ -39,6 +39,17 @@ python -m venv .venv
 
 # 3. Ollama のインストールとモデルの取得
 ollama pull qwen2.5-coder:7b   # 推奨（コーディング特化、Function Calling 対応）
+
+# 4. PATH に追加（一度だけ）― どこからでも agent コマンドで起動できるようにする
+#
+# Windows: システム環境変数の Path にプロジェクトディレクトリを追加
+#   例: C:\Users\yourname\work\StandAloneLlmAgent
+#   追加後、新しいターミナルを開くと有効になる
+#
+# Mac / Linux: ~/.bashrc または ~/.zshrc に追記
+#   export PATH="$HOME/path/to/StandAloneLlmAgent:$PATH"
+#   追記後: source ~/.bashrc  （または新しいターミナルを開く）
+#   chmod +x ~/path/to/StandAloneLlmAgent/agent.sh
 ```
 
 ## 起動方法
@@ -47,7 +58,11 @@ ollama pull qwen2.5-coder:7b   # 推奨（コーディング特化、Function Ca
 # Ollama を起動（別ターミナルで）
 ollama serve
 
-# エージェントを起動
+# どこからでも起動（PATH 設定済みの場合）
+agent          # Windows
+./agent.sh     # Mac / Linux（PATH 未設定の場合）
+
+# PATH 未設定の場合はプロジェクトディレクトリから
 python -m cli.app
 ```
 
