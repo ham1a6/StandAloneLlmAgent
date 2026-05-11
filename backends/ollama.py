@@ -74,22 +74,7 @@ class OllamaBackend(LLMBackend):
         # 1. Try native tool_calls field (works on newer Ollama versions)
         raw_tcs = msg_data.get("tool_calls")
         if raw_tcs:
-            tool_calls = []
-            for i, tc in enumerate(raw_tcs):
-                fn = tc.get("function", {})
-                args = fn.get("arguments", {})
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except json.JSONDecodeError:
-                        args = {}
-                tool_calls.append(
-                    ToolCall(
-                        id=tc.get("id", f"call_{i}"),
-                        name=fn.get("name", ""),
-                        arguments=args,
-                    )
-                )
+            tool_calls = self._parse_native_tool_calls(raw_tcs)
 
         # 2. Fallback: parse <tool_call> blocks or JSON lines from content
         if not tool_calls and content:
@@ -104,6 +89,24 @@ class OllamaBackend(LLMBackend):
             tool_calls=tool_calls,
         )
         return ChatResponse(message=message, done=data.get("done", True))
+
+    def _parse_native_tool_calls(self, raw_tcs: list[dict]) -> list[ToolCall]:
+        """Convert Ollama native tool_calls dicts to ToolCall objects."""
+        result = []
+        for i, tc in enumerate(raw_tcs):
+            fn = tc.get("function", {})
+            args = fn.get("arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {}
+            result.append(ToolCall(
+                id=tc.get("id", f"call_{i}"),
+                name=fn.get("name", ""),
+                arguments=args,
+            ))
+        return result
 
     def _extract_tool_calls(self, text: str) -> tuple[list[ToolCall] | None, str]:
         """Parse tool calls from text. Returns (tool_calls, text_with_tags_removed)."""
@@ -180,6 +183,7 @@ class OllamaBackend(LLMBackend):
             payload["tools"] = [t.model_dump() for t in tools]
 
         accumulated: list[str] = []
+        streamed_tool_calls: list[dict] = []
         final_data: dict[str, Any] = {}
         with httpx.Client(timeout=300) as client:
             with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as response:
@@ -188,14 +192,23 @@ class OllamaBackend(LLMBackend):
                     if not line:
                         continue
                     data = json.loads(line)
-                    chunk = data.get("message", {}).get("content", "")
+                    msg = data.get("message", {})
+                    chunk = msg.get("content", "")
                     if chunk:
                         accumulated.append(chunk)
+                    # Native tool_calls may arrive in intermediate chunks (not in done chunk)
+                    if msg.get("tool_calls"):
+                        streamed_tool_calls.extend(msg["tool_calls"])
                     if data.get("done"):
                         final_data = data
                         break
 
         result = self._parse_response(final_data)
+
+        # Promote streamed native tool_calls when _parse_response found none in the done chunk
+        if streamed_tool_calls and not result.message.tool_calls:
+            result.message.tool_calls = self._parse_native_tool_calls(streamed_tool_calls)
+            result.message.content = None
 
         # Merge streamed text with parsed result.
         # Strip Qwen template tokens here too — the streaming chunks bypass _parse_response.

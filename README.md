@@ -113,16 +113,17 @@ permissions:
 
 ### 推奨モデル
 
-| モデル | 用途 | VRAM | Tool Calling |
-|---|---|---|---|
-| `qwen2.5-coder:7b` | コーディング特化（推奨） | 6 GB | ◎ |
-| `qwen2.5-coder:14b` | コーディング（高精度） | 10 GB | ◎ |
-| `deepseek-coder-v2:16b` | コーディング（高精度） | 12 GB | ○ |
-| `llama3.1:8b` | 汎用 | 6 GB | × |
+| モデル | 提供元 | 用途 | VRAM | Tool Calling |
+|---|---|---|---|---|
+| `mistral-nemo:12b` | Mistral AI / NVIDIA（仏・米） | 汎用・デフォルト（推奨） | 8 GB | ◎ |
+| `llama3.1:8b` | Meta（米） | 汎用・軽量代替 | 6 GB | ○ |
+| `mistral:7b` | Mistral AI（仏） | 軽量（ツール呼び出し不安定） | 6 GB | △ |
+| `phi4:14b` | Microsoft（米） | 高精度（tools API 非対応） | 10 GB | × |
+| `qwen2.5-coder:7b` | Alibaba（中） | コーディング特化 | 6 GB | ◎ |
 
 > **Tool Calling について**: このエージェントはツール呼び出し（Function Calling）に依存しています。
-> `qwen2.5-coder` 系が最も安定しており推奨です。`llama3.1:8b` は Function Calling に
-> 非対応のため、このエージェントでは正常に動作しません。
+> `mistral-nemo:12b` が非中国製モデルで最も安定しており推奨です。
+> `phi4:14b` は Ollama の tools API に非対応のため動作しません。
 
 ## 組み込みツール
 
