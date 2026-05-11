@@ -1,9 +1,12 @@
 from __future__ import annotations
 import json
+import re
 from typing import Any, Callable
 import httpx
 from agent.models import Message, ToolSchema, ChatResponse, ToolCall
 from backends.base import LLMBackend
+
+_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
 
 
 class OllamaBackend(LLMBackend):
@@ -33,6 +36,8 @@ class OllamaBackend(LLMBackend):
                 "num_ctx": self.context_window,
             },
         }
+        # Send tools so Ollama can use native calling when available.
+        # We also parse <tool_call> blocks as a fallback.
         if tools:
             payload["tools"] = [t.model_dump() for t in tools]
 
@@ -61,6 +66,8 @@ class OllamaBackend(LLMBackend):
         content = msg_data.get("content") or None
 
         tool_calls: list[ToolCall] | None = None
+
+        # 1. Try native tool_calls field (works on newer Ollama versions)
         raw_tcs = msg_data.get("tool_calls")
         if raw_tcs:
             tool_calls = []
@@ -80,12 +87,12 @@ class OllamaBackend(LLMBackend):
                     )
                 )
 
-        # Fallback: some Ollama versions return tool calls as JSON text in content
-        # instead of the structured tool_calls field. Parse them here.
+        # 2. Fallback: parse <tool_call> blocks or JSON lines from content
         if not tool_calls and content:
-            tool_calls = self._extract_text_tool_calls(content)
-            if tool_calls:
-                content = None
+            parsed, remaining = self._extract_tool_calls(content)
+            if parsed:
+                tool_calls = parsed
+                content = remaining or None
 
         message = Message(
             role=msg_data.get("role", "assistant"),
@@ -94,43 +101,59 @@ class OllamaBackend(LLMBackend):
         )
         return ChatResponse(message=message, done=data.get("done", True))
 
-    def _extract_text_tool_calls(self, text: str) -> list[ToolCall] | None:
-        """Parse tool calls embedded as JSON in content (Ollama <=0.3 / some model variants)."""
+    def _extract_tool_calls(self, text: str) -> tuple[list[ToolCall] | None, str]:
+        """Parse tool calls from text. Returns (tool_calls, text_with_tags_removed)."""
         results: list[ToolCall] = []
-        # Strip markdown fences if present
+
+        # Primary: <tool_call>...</tool_call> blocks (Qwen2.5 native format)
+        for i, m in enumerate(_TOOL_CALL_RE.finditer(text)):
+            try:
+                obj = json.loads(m.group(1))
+                name = obj.get("name")
+                args = obj.get("arguments") or obj.get("parameters") or {}
+                if name and isinstance(args, dict):
+                    results.append(ToolCall(id=f"call_{i}", name=name, arguments=args))
+            except json.JSONDecodeError:
+                pass
+
+        if results:
+            cleaned = _TOOL_CALL_RE.sub("", text).strip()
+            return results, cleaned
+
+        # Secondary: bare JSON lines {"name": ..., "arguments": ...}
         cleaned = text.strip()
         if cleaned.startswith("```"):
             cleaned = "\n".join(cleaned.splitlines()[1:])
             cleaned = cleaned.rsplit("```", 1)[0].strip()
 
-        # Split on lines — each line may be a separate JSON tool call
         for i, line in enumerate(cleaned.splitlines()):
             line = line.strip()
             if not (line.startswith("{") and line.endswith("}")):
                 continue
             try:
                 obj = json.loads(line)
+                name = obj.get("name")
+                args = obj.get("arguments") or obj.get("parameters") or {}
+                if name and isinstance(args, dict):
+                    results.append(ToolCall(id=f"call_{i}", name=name, arguments=args))
             except json.JSONDecodeError:
-                continue
-            name = obj.get("name")
-            # Accept both {"arguments": ...} and {"parameters": ...}
-            args = obj.get("arguments") or obj.get("parameters") or {}
-            if not name or not isinstance(args, dict):
-                continue
-            results.append(ToolCall(id=f"call_{i}", name=name, arguments=args))
+                pass
 
-        # Also try the entire cleaned block as one JSON object
-        if not results and cleaned.startswith("{") and cleaned.endswith("}"):
+        if results:
+            return results, ""
+
+        # Tertiary: entire content is one JSON object
+        if cleaned.startswith("{") and cleaned.endswith("}"):
             try:
                 obj = json.loads(cleaned)
                 name = obj.get("name")
                 args = obj.get("arguments") or obj.get("parameters") or {}
                 if name and isinstance(args, dict):
-                    results.append(ToolCall(id="call_0", name=name, arguments=args))
+                    return [ToolCall(id="call_0", name=name, arguments=args)], ""
             except json.JSONDecodeError:
                 pass
 
-        return results or None
+        return None, text
 
     def chat_stream(
         self,
@@ -138,14 +161,8 @@ class OllamaBackend(LLMBackend):
         tools: list[ToolSchema] | None = None,
         on_chunk: Callable[[str], None] | None = None,
     ) -> ChatResponse:
-        # When tools are provided, use non-streaming to avoid showing raw tool-call JSON
-        # as text — some Ollama versions embed tool calls in content rather than tool_calls.
-        if tools:
-            response = self.chat(messages, tools)
-            if on_chunk and response.message.content:
-                on_chunk(response.message.content)
-            return response
-
+        # Buffer the full response first so we can strip <tool_call> blocks before display.
+        # This avoids showing raw XML tags to the user when the model uses the text format.
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [self._to_dict(m) for m in messages],
@@ -155,6 +172,8 @@ class OllamaBackend(LLMBackend):
                 "num_ctx": self.context_window,
             },
         }
+        if tools:
+            payload["tools"] = [t.model_dump() for t in tools]
 
         accumulated: list[str] = []
         final_data: dict[str, Any] = {}
@@ -168,15 +187,29 @@ class OllamaBackend(LLMBackend):
                     chunk = data.get("message", {}).get("content", "")
                     if chunk:
                         accumulated.append(chunk)
-                        if on_chunk:
-                            on_chunk(chunk)
                     if data.get("done"):
                         final_data = data
                         break
 
         result = self._parse_response(final_data)
-        if not result.message.tool_calls and accumulated and not result.message.content:
-            result.message.content = "".join(accumulated)
+
+        # Merge streamed text with parsed result
+        full_text = "".join(accumulated)
+        if result.message.tool_calls:
+            # Tool calls from native field — don't show raw content
+            pass
+        elif full_text:
+            # Check full accumulated text for tool calls (streaming may miss them in done chunk)
+            parsed, remaining = self._extract_tool_calls(full_text)
+            if parsed:
+                result.message.tool_calls = parsed
+                result.message.content = remaining or None
+            else:
+                # Pure text response — stream it to the UI now
+                result.message.content = full_text
+                if on_chunk:
+                    on_chunk(full_text)
+
         return result
 
     def is_available(self) -> bool:
