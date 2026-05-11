@@ -1,4 +1,5 @@
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 from agent.models import Message
 from agent.context import ContextManager
@@ -40,22 +41,44 @@ class Agent:
             if response.message.tool_calls:
                 self.context.add(response.message)
 
+                # task_done is always handled synchronously and terminates the loop
                 for tc in response.message.tool_calls:
-                    if self.on_tool_call:
-                        self.on_tool_call(tc.name, tc.arguments)
-
                     if tc.name == _TASK_DONE:
                         result = tc.arguments.get("result", "完了しました")
+                        if self.on_tool_call:
+                            self.on_tool_call(tc.name, tc.arguments)
                         if self.on_tool_result:
                             self.on_tool_result(tc.name, result)
                         return result
 
-                    result = self.dispatcher.dispatch(tc)
-                    if self.on_tool_result:
-                        self.on_tool_result(tc.name, result)
+                # Notify all tool calls before execution
+                for tc in response.message.tool_calls:
+                    if self.on_tool_call:
+                        self.on_tool_call(tc.name, tc.arguments)
 
+                # Execute tool calls — parallel when multiple, direct when single
+                results: dict[str, str] = {}
+                if len(response.message.tool_calls) == 1:
+                    tc = response.message.tool_calls[0]
+                    results[tc.id] = self.dispatcher.dispatch(tc)
+                    if self.on_tool_result:
+                        self.on_tool_result(tc.name, results[tc.id])
+                else:
+                    with ThreadPoolExecutor() as executor:
+                        future_to_tc = {
+                            executor.submit(self.dispatcher.dispatch, tc): tc
+                            for tc in response.message.tool_calls
+                        }
+                        for future in as_completed(future_to_tc):
+                            tc = future_to_tc[future]
+                            results[tc.id] = future.result()
+                            if self.on_tool_result:
+                                self.on_tool_result(tc.name, results[tc.id])
+
+                # Add results to context in original order
+                for tc in response.message.tool_calls:
                     self.context.add(
-                        Message(role="tool", content=result, tool_call_id=tc.id)
+                        Message(role="tool", content=results[tc.id], tool_call_id=tc.id)
                     )
             else:
                 content = response.message.content or ""
