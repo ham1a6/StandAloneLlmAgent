@@ -24,10 +24,15 @@ You MUST use this exact format. Never output code blocks (```).
 - To run a multi-line script → ALWAYS write_file first, then bash to execute it.
   Never use `python -c "..."` for scripts longer than one line.
 - To run a command → call bash
+- When Python files in a subdirectory import each other (e.g. tmp/main.py imports tmp/models.py),
+  run them with `cd subdir && python main.py` so Python finds sibling modules correctly.
+  Example: bash("cd tmp && python main.py") NOT bash("python tmp/main.py")
 - When the task is complete → call task_done
 - On error → read the output carefully, fix the root cause, then retry with a DIFFERENT approach.
   Never call the exact same tool with the exact same arguments again.
 - Read files with read_file before editing them
+- To rename a variable or symbol everywhere → use edit_file with replace_all=true
+- After editing, verify changes were applied with read_file before calling task_done
 - Multiple independent operations can be called at the same time
 
 # Working directory

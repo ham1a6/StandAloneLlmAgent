@@ -136,6 +136,35 @@ def test_reset_clears_conversation():
     assert msgs[0].role == "system"
 
 
+def test_empty_response_nudges_and_continues():
+    """空レスポンスが返ったとき、モデルへの再試行メッセージを注入してループを継続する。"""
+    dispatcher = _MockDispatcher()
+    agent = Agent(
+        backend=_MockBackend([
+            _text(""),          # 空レスポンス → ナッジして再試行
+            _text("all done"),  # 次のターンで正常応答
+        ]),
+        dispatcher=dispatcher,
+    )
+    result = agent.run("test")
+    assert result == "all done"
+    # ナッジメッセージが context に入っていること
+    msgs = agent.context.get_messages()
+    nudge_msgs = [m for m in msgs if m.role == "user" and "empty" in (m.content or "")]
+    assert len(nudge_msgs) == 1
+
+
+def test_consecutive_empty_responses_returns_error():
+    """空レスポンスが2回続いたらエラーメッセージを返してループを抜ける。"""
+    agent = Agent(
+        backend=_MockBackend([_text(""), _text(""), _text("never reached")]),
+        dispatcher=_MockDispatcher(),
+    )
+    result = agent.run("test")
+    assert "Error" in result
+    assert "リセット" in result
+
+
 def test_user_message_added_to_context():
     backend = _MockBackend([_text("ok")])
     agent = Agent(backend=backend, dispatcher=_MockDispatcher())

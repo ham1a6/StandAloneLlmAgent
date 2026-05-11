@@ -39,12 +39,20 @@ def write_file(path: str, content: str) -> str:
         return f"Error: {e}"
 
 
-@tool(name="edit_file", description="ファイル内の文字列を一箇所だけ置換する")
-def edit_file(path: str, old_string: str, new_string: str) -> str:
+@tool(
+    name="edit_file",
+    description=(
+        "Replace a string in a file. "
+        "By default replaces only one occurrence (old_string must be unique). "
+        "Set replace_all=true to replace every occurrence (use for renaming variables, etc.)."
+    ),
+)
+def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
     """
-    path: 編集するファイルのパス
-    old_string: 置換前の文字列（ファイル内で一意である必要がある）
-    new_string: 置換後の文字列
+    path: path of the file to edit
+    old_string: string to replace
+    new_string: replacement string
+    replace_all: if true, replace all occurrences; if false (default), old_string must be unique
     """
     try:
         p = Path(path)
@@ -54,10 +62,13 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
         count = content.count(old_string)
         if count == 0:
             return f"Error: old_string not found in {path}"
-        if count > 1:
-            return f"Error: old_string matches {count} times — must be unique"
-        p.write_text(content.replace(old_string, new_string, 1), encoding="utf-8")
-        return f"Edited {path}"
+        if not replace_all and count > 1:
+            return (
+                f"Error: old_string matches {count} times — use replace_all=true to replace all, "
+                "or provide more context to make old_string unique"
+            )
+        p.write_text(content.replace(old_string, new_string), encoding="utf-8")
+        return f"Replaced {count} occurrence(s) in {path}"
     except Exception as e:
         return f"Error: {e}"
 

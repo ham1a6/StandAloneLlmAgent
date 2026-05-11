@@ -245,3 +245,358 @@ def test_agent_renames_variable_consistently(ollama_backend, workdir):
     assert proc.returncode == 0, (
         f"リネーム後にスクリプトがクラッシュした:\n{proc.stderr}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 複雑なアプリ作成テスト
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_agent_creates_bank_account_class(ollama_backend, workdir):
+    """複数メソッド・バリデーション付きのクラスを一から作成できることを確認する。
+
+    シナリオ: BankAccount クラスを持つ bank_account.py を作成させる。
+    - deposit / withdraw / get_balance の3メソッド
+    - deposit・withdraw は amount <= 0 で ValueError
+    - withdraw は残高不足で ValueError
+    """
+    import subprocess
+    agent = _make_agent(ollama_backend, max_steps=20)
+    agent.run(
+        "bank_account.py を write_file で作成してください。\n"
+        "以下の BankAccount クラスを実装してください:\n"
+        "  - __init__(self): balance を 0 に初期化\n"
+        "  - deposit(self, amount): amount <= 0 なら ValueError。それ以外は balance に加算\n"
+        "  - withdraw(self, amount): amount <= 0 または balance 未満なら ValueError。それ以外は balance から減算\n"
+        "  - get_balance(self): 現在の balance を返す\n"
+        "作成後 bash で以下を実行して動作確認してください:\n"
+        "python -c \""
+        "from bank_account import BankAccount; "
+        "acc = BankAccount(); "
+        "acc.deposit(1000); "
+        "acc.withdraw(300); "
+        "assert acc.get_balance() == 700, acc.get_balance(); "
+        "print('OK')"
+        "\""
+    )
+
+    target = workdir / "bank_account.py"
+    assert target.exists(), "bank_account.py が作成されていない"
+
+    proc = subprocess.run(
+        ["python", "-c",
+         "from bank_account import BankAccount; "
+         "acc = BankAccount(); "
+         "acc.deposit(500); acc.withdraw(200); "
+         "assert acc.get_balance() == 300; "
+         # deposit with invalid amount should raise
+         "raised = False\n"
+         "try:\n"
+         "    acc.deposit(-1)\n"
+         "except ValueError:\n"
+         "    raised = True\n"
+         "assert raised"],
+        capture_output=True, text=True, cwd=str(workdir),
+    )
+    assert proc.returncode == 0, (
+        f"BankAccount の動作が正しくない:\n{proc.stderr}"
+    )
+
+
+@pytest.mark.integration
+def test_agent_creates_word_counter(ollama_backend, workdir):
+    """複数の関連する関数を持つモジュールを作成できることを確認する。
+
+    シナリオ: テキスト解析モジュール word_counter.py を作成させる。
+    - count_words(text): 各単語の出現回数を dict で返す（小文字統一）
+    - top_n(text, n): 出現頻度上位 n 件を (word, count) のリストで返す
+    """
+    import subprocess
+    agent = _make_agent(ollama_backend, max_steps=20)
+    agent.run(
+        "word_counter.py を write_file で作成してください。\n"
+        "以下の関数を実装してください:\n"
+        "  - count_words(text: str) -> dict: テキスト内の各単語の出現回数を返す（小文字に統一、句読点は無視）\n"
+        "  - top_n(text: str, n: int) -> list: 出現回数の多い順に n 個の (word, count) タプルのリストを返す\n"
+        "作成後 bash で以下を実行して動作確認してください:\n"
+        "python -c \""
+        "from word_counter import count_words, top_n; "
+        "r = count_words('the cat sat on the mat the cat'); "
+        "assert r['the'] == 3, r; "
+        "assert r['cat'] == 2, r; "
+        "t = top_n('a a a b b c', 2); "
+        "assert t[0][0] == 'a', t; "
+        "assert len(t) == 2, t; "
+        "print('OK')"
+        "\""
+    )
+
+    target = workdir / "word_counter.py"
+    assert target.exists(), "word_counter.py が作成されていない"
+
+    proc = subprocess.run(
+        ["python", "-c",
+         "from word_counter import count_words, top_n; "
+         "r = count_words('hello world hello'); "
+         "assert r.get('hello') == 2, r; "
+         "t = top_n('x x x y y z', 1); "
+         "assert t[0][0] == 'x', t"],
+        capture_output=True, text=True, cwd=str(workdir),
+    )
+    assert proc.returncode == 0, (
+        f"word_counter の動作が正しくない:\n{proc.stderr}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 長い指示による改修テスト
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_agent_refactors_with_long_instructions(ollama_backend, workdir):
+    """複数の改修要件を含む長い指示に従ってファイルを改修できることを確認する。
+
+    シナリオ: バリデーションなし・型ヒントなしの stats.py に対して
+    1. 空リスト渡しで ValueError を raise する入力検証を追加
+    2. 全統計値を一度に返す summary() 関数を追加
+    """
+    import subprocess
+    target = workdir / "stats.py"
+    target.write_text(
+        "def mean(values):\n"
+        "    return sum(values) / len(values)\n"
+        "\n"
+        "def minimum(values):\n"
+        "    return min(values)\n"
+        "\n"
+        "def maximum(values):\n"
+        "    return max(values)\n",
+        encoding="utf-8",
+    )
+
+    agent = _make_agent(ollama_backend, max_steps=25)
+    agent.run(
+        "stats.py を read_file で読み込んでください。\n"
+        "以下の改修をすべて行ってください:\n"
+        "\n"
+        "1. mean / minimum / maximum の各関数の先頭に入力検証を追加する。\n"
+        "   values が空リスト（len == 0）の場合は ValueError('values must not be empty') を raise すること。\n"
+        "\n"
+        "2. 以下のシグネチャで summary 関数を追加する:\n"
+        "   def summary(values) -> dict:\n"
+        "       mean, min, max をキーに持つ辞書を返す\n"
+        "       例: summary([1, 2, 3]) == {'mean': 2.0, 'min': 1, 'max': 3}\n"
+        "\n"
+        "修正後 bash で以下を実行してエラーが出ないことを確認してください:\n"
+        "python -c \""
+        "from stats import mean, minimum, maximum, summary; "
+        "assert mean([1,2,3]) == 2.0; "
+        "assert minimum([3,1,2]) == 1; "
+        "assert maximum([3,1,2]) == 3; "
+        "s = summary([1,2,3]); "
+        "assert s['mean'] == 2.0 and s['min'] == 1 and s['max'] == 3; "
+        "print('OK')"
+        "\""
+    )
+
+    src = target.read_text(encoding="utf-8")
+    assert "summary" in src, f"summary 関数が追加されていない:\n{src}"
+    assert "ValueError" in src, f"入力検証が追加されていない:\n{src}"
+
+    proc = subprocess.run(
+        ["python", "-c",
+         "from stats import mean, summary; "
+         # 既存関数が動作すること
+         "assert mean([10, 20, 30]) == 20.0; "
+         # summary が正しく動作すること
+         "s = summary([2, 4, 6]); "
+         "assert s['mean'] == 4.0 and s['min'] == 2 and s['max'] == 6; "
+         # 空リストで ValueError が発生すること
+         "ok = False\n"
+         "try:\n"
+         "    mean([])\n"
+         "except ValueError:\n"
+         "    ok = True\n"
+         "assert ok, 'ValueError が発生しなかった'"],
+        capture_output=True, text=True, cwd=str(workdir),
+    )
+    assert proc.returncode == 0, (
+        f"改修後の stats.py が正しく動作しない:\n{proc.stderr}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 複数ファイル改修テスト
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_agent_adds_feature_across_two_files(ollama_backend, workdir):
+    """2ファイルを連携して修正し、新機能を追加できることを確認する。
+
+    シナリオ:
+    - geometry.py: circle_area / rectangle_area を定義
+    - report.py  : geometry をインポートして面積を出力
+    geometry.py に triangle_area(base, height) を追加し、
+    report.py からも呼び出すよう修正させる。
+    """
+    import subprocess
+    (workdir / "geometry.py").write_text(
+        "import math\n"
+        "\n"
+        "def circle_area(r):\n"
+        "    return math.pi * r * r\n"
+        "\n"
+        "def rectangle_area(w, h):\n"
+        "    return w * h\n",
+        encoding="utf-8",
+    )
+    (workdir / "report.py").write_text(
+        "from geometry import circle_area, rectangle_area\n"
+        "\n"
+        "print(f'circle  : {circle_area(5):.2f}')\n"
+        "print(f'rectangle: {rectangle_area(4, 6)}')\n",
+        encoding="utf-8",
+    )
+
+    agent = _make_agent(ollama_backend, max_steps=25)
+    agent.run(
+        "geometry.py と report.py を read_file でそれぞれ読み込んでください。\n"
+        "以下の変更をすべて行ってください:\n"
+        "\n"
+        "1. geometry.py に triangle_area(base, height) 関数を追加する。\n"
+        "   計算式: base * height / 2\n"
+        "\n"
+        "2. report.py を修正して triangle_area をインポートし、\n"
+        "   triangle_area(6, 8) の結果も出力するようにする。\n"
+        "\n"
+        "修正後 bash で python report.py を実行して3行分の出力が得られることを確認してください。"
+    )
+
+    geo_src = (workdir / "geometry.py").read_text(encoding="utf-8")
+    assert "triangle_area" in geo_src, f"triangle_area が geometry.py に追加されていない:\n{geo_src}"
+
+    rep_src = (workdir / "report.py").read_text(encoding="utf-8")
+    assert "triangle_area" in rep_src, f"triangle_area が report.py から呼ばれていない:\n{rep_src}"
+
+    proc = subprocess.run(
+        ["python", "report.py"], capture_output=True, text=True, cwd=str(workdir),
+    )
+    assert proc.returncode == 0, f"report.py がクラッシュした:\n{proc.stderr}"
+    assert proc.stdout.count("\n") >= 3, (
+        f"出力が3行未満:\n{proc.stdout!r}"
+    )
+
+    # triangle_area の計算が正しいことを直接検証
+    proc2 = subprocess.run(
+        ["python", "-c",
+         "from geometry import triangle_area; "
+         "assert triangle_area(6, 8) == 24.0, triangle_area(6, 8)"],
+        capture_output=True, text=True, cwd=str(workdir),
+    )
+    assert proc2.returncode == 0, (
+        f"triangle_area の計算が正しくない:\n{proc2.stderr}"
+    )
+
+
+@pytest.mark.integration
+def test_agent_renames_function_across_multiple_files(ollama_backend, workdir):
+    """複数ファイルにまたがる関数リネームが一貫して行えることを確認する。
+
+    シナリオ:
+    - utils.py  : calc_tax(price, rate) を定義
+    - invoice.py: calc_tax をインポートして使用
+    calc_tax を calculate_tax にリネームさせる。
+    """
+    import subprocess
+    (workdir / "utils.py").write_text(
+        "def calc_tax(price, rate):\n"
+        "    return price * rate / 100\n",
+        encoding="utf-8",
+    )
+    (workdir / "invoice.py").write_text(
+        "from utils import calc_tax\n"
+        "\n"
+        "def print_invoice(price, rate):\n"
+        "    tax = calc_tax(price, rate)\n"
+        "    print(f'price={price}, tax={tax:.2f}, total={price + tax:.2f}')\n"
+        "\n"
+        "print_invoice(1000, 10)\n",
+        encoding="utf-8",
+    )
+
+    agent = _make_agent(ollama_backend, max_steps=25)
+    agent.run(
+        "utils.py と invoice.py を read_file でそれぞれ読み込んでください。\n"
+        "関数名 calc_tax をすべての箇所で calculate_tax にリネームしてください。\n"
+        "変更が必要な箇所:\n"
+        "  - utils.py の関数定義 (def calc_tax)\n"
+        "  - invoice.py の import 文 (from utils import calc_tax)\n"
+        "  - invoice.py の呼び出し箇所 (calc_tax(...))\n"
+        "変更後 bash で python invoice.py を実行してエラーが出ないことを確認してください。"
+    )
+
+    utils_src = (workdir / "utils.py").read_text(encoding="utf-8")
+    invoice_src = (workdir / "invoice.py").read_text(encoding="utf-8")
+
+    assert "calculate_tax" in utils_src, f"utils.py でリネームされていない:\n{utils_src}"
+    assert "calc_tax" not in utils_src, f"utils.py に古い名前が残っている:\n{utils_src}"
+    assert "calculate_tax" in invoice_src, f"invoice.py でリネームされていない:\n{invoice_src}"
+    assert "calc_tax" not in invoice_src, f"invoice.py に古い名前が残っている:\n{invoice_src}"
+
+    proc = subprocess.run(
+        ["python", "invoice.py"], capture_output=True, text=True, cwd=str(workdir),
+    )
+    assert proc.returncode == 0, f"invoice.py がクラッシュした:\n{proc.stderr}"
+    assert "total=" in proc.stdout, f"期待する出力が得られなかった:\n{proc.stdout!r}"
+
+
+@pytest.mark.integration
+def test_agent_creates_multifile_app_in_subdir(ollama_backend, workdir):
+    """サブディレクトリに複数ファイルを作成し、sibling import が正しく動作することを確認する。
+
+    シナリオ: tmp/ ディレクトリ内に models.py と main.py を作成させる。
+    main.py は models.py をインポートして使う。
+    エージェントが `cd tmp && python main.py` のように実行すれば成功。
+    `python tmp/main.py` だと ModuleNotFoundError になるはずのシナリオ。
+    """
+    import subprocess
+
+    agent = _make_agent(ollama_backend, max_steps=20)
+    agent.run(
+        f"作業ディレクトリ: {workdir}\n"
+        f"{workdir}/tmp ディレクトリ内に以下の2ファイルを作成してください:\n"
+        "\n"
+        "1. models.py:\n"
+        "   class Item:\n"
+        "       def __init__(self, name, price):\n"
+        "           self.name = name\n"
+        "           self.price = price\n"
+        "       def __repr__(self):\n"
+        "           return f'Item({self.name!r}, {self.price})'\n"
+        "\n"
+        "2. main.py (models.py をインポートして使う):\n"
+        "   from models import Item\n"
+        "   items = [Item('apple', 100), Item('banana', 80)]\n"
+        "   for item in items:\n"
+        "       print(item)\n"
+        "\n"
+        "作成後、bash で実行して動作確認してください。"
+    )
+
+    tmp = workdir / "tmp"
+    assert tmp.exists(), "tmp/ ディレクトリが作成されていない"
+    assert (tmp / "models.py").exists(), "tmp/models.py が作成されていない"
+    assert (tmp / "main.py").exists(), "tmp/main.py が作成されていない"
+
+    main_src = (tmp / "main.py").read_text(encoding="utf-8")
+    assert "models" in main_src, f"main.py が models をインポートしていない:\n{main_src}"
+
+    proc = subprocess.run(
+        ["python", "main.py"], capture_output=True, text=True, cwd=str(tmp),
+    )
+    assert proc.returncode == 0, (
+        f"python main.py がクラッシュした (cwd=tmp):\n{proc.stderr}"
+    )
+    assert "apple" in proc.stdout or "Item" in proc.stdout, (
+        f"期待する出力が得られなかった:\n{proc.stdout!r}"
+    )

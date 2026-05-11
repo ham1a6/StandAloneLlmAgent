@@ -58,8 +58,16 @@ def test_edit_file_success(tmp_path):
     f = tmp_path / "edit.txt"
     f.write_text("hello world", encoding="utf-8")
     result = edit_file(str(f), "hello", "goodbye")
-    assert "Edited" in result
+    assert "Replaced" in result
     assert f.read_text(encoding="utf-8") == "goodbye world"
+
+
+def test_edit_file_replace_all(tmp_path):
+    f = tmp_path / "f.txt"
+    f.write_text("abc abc abc", encoding="utf-8")
+    result = edit_file(str(f), "abc", "xyz", replace_all=True)
+    assert "3" in result
+    assert f.read_text(encoding="utf-8") == "xyz xyz xyz"
 
 
 def test_edit_file_not_found(tmp_path):
