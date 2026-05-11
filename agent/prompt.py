@@ -33,7 +33,8 @@ You MUST use this exact format. Never output code blocks (```).
 - Read files with read_file before editing them
 - To rename a variable or symbol everywhere → use edit_file with replace_all=true
 - After editing, verify changes were applied with read_file before calling task_done
-- Multiple independent operations can be called at the same time
+- Multiple independent read/write operations can be called at the same time
+- NEVER mix bash with write_file/edit_file in one batch — finish all writes first, then call bash in the next turn
 
 # Working directory
 {cwd}

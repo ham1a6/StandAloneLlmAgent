@@ -197,8 +197,9 @@ class OllamaBackend(LLMBackend):
 
         result = self._parse_response(final_data)
 
-        # Merge streamed text with parsed result
-        full_text = "".join(accumulated)
+        # Merge streamed text with parsed result.
+        # Strip Qwen template tokens here too — the streaming chunks bypass _parse_response.
+        full_text = _TEMPLATE_TOKEN_RE.sub("", "".join(accumulated)).strip()
         if result.message.tool_calls:
             # Tool calls from native field — don't show raw content
             pass

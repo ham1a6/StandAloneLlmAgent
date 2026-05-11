@@ -1,8 +1,30 @@
 import platform
 import subprocess
 import os
+import re
 import threading
 from tools.registry import tool
+
+# Match `python[3] dir/script.py [args]` — single directory level only
+_PYTHON_SUBDIR_RE = re.compile(
+    r'^(python3?)\s+([\w.\-]+)[/\\]([\w.\-]+\.py)((?:\s+.*)?)$',
+    re.IGNORECASE,
+)
+
+
+def _rewrite_python_subdir(command: str) -> str:
+    """Rewrite `python dir/script.py` → `cd dir && python script.py`.
+
+    Running `python subdir/script.py` from the project root causes sibling
+    imports to fail because Python does NOT add subdir to sys.path when the
+    path contains a directory component on some platforms/versions.
+    This transformation ensures the cwd matches the script's directory.
+    """
+    m = _PYTHON_SUBDIR_RE.match(command.strip())
+    if not m:
+        return command
+    py_exe, directory, script, args = m.group(1), m.group(2), m.group(3), m.group(4)
+    return f'cd {directory} && {py_exe} {script}{args}'
 
 _IS_WINDOWS = platform.system() == "Windows"
 _CWD_MARKER = "__AGENT_CWD__:"
@@ -43,6 +65,7 @@ def bash(command: str, timeout: int = 60) -> str:
     command: 実行するシェルコマンド
     timeout: タイムアウト秒数
     """
+    command = _rewrite_python_subdir(command)
     cwd = _get_cwd()
     try:
         if _IS_WINDOWS:
