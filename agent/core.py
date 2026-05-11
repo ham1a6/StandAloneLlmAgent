@@ -26,14 +26,15 @@ class Agent:
         self.context = ContextManager()
         self.context.set_system(build_system_prompt())
 
-    def run(self, user_prompt: str) -> str:
+    def run(self, user_prompt: str, on_text_chunk: Callable[[str], None] | None = None) -> str:
         self.context.add(Message(role="user", content=user_prompt))
         tools = self.dispatcher.get_schemas()
 
         for _ in range(self.max_steps):
-            response = self.backend.chat(
+            response = self.backend.chat_stream(
                 messages=self.context.get_messages(),
                 tools=tools,
+                on_chunk=on_text_chunk,
             )
 
             if response.message.tool_calls:

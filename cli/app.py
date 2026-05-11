@@ -1,7 +1,10 @@
 from __future__ import annotations
 import sys
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
+from rich.spinner import Spinner
+from rich.text import Text
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.formatted_text import HTML
@@ -42,27 +45,52 @@ def _make_agent(settings: Settings) -> Agent:
         console.print(f"[red]Error: backend '{settings.backend}' は未対応です（Phase 2 予定）[/red]")
         sys.exit(1)
 
-    dispatcher = ToolDispatcher()
-
-    def on_tool_call(name: str, args: dict) -> None:
-        args_str = ", ".join(f"{k}={repr(v)[:60]}" for k, v in args.items())
-        console.print(f"  [dim cyan][Tool: {name}({args_str})][/dim cyan]")
-
-    def on_tool_result(name: str, result: str) -> None:
-        if name == "task_done":
-            return
-        lines = result.splitlines()
-        preview = "\n    ".join(lines[:4])
-        suffix = f"\n    [dim]... ({len(lines) - 4} more lines)[/dim]" if len(lines) > 4 else ""
-        console.print(f"  [dim]→ {preview}{suffix}[/dim]")
-
     return Agent(
         backend=backend,
-        dispatcher=dispatcher,
+        dispatcher=ToolDispatcher(),
         max_steps=settings.agent.max_steps,
-        on_tool_call=on_tool_call,
-        on_tool_result=on_tool_result,
     )
+
+
+def _run_with_ui(agent: Agent, user_input: str) -> None:
+    chunks: list[str] = []
+    spinner = Spinner("dots", text=" Thinking…", style="dim")
+
+    with Live(spinner, console=console, refresh_per_second=15) as live:
+
+        def on_text_chunk(chunk: str) -> None:
+            chunks.append(chunk)
+            live.update(Text("".join(chunks)))
+
+        def on_tool_call(name: str, args: dict) -> None:
+            if chunks:
+                console.print(Text("".join(chunks)))
+                chunks.clear()
+            args_str = ", ".join(f"{k}={repr(v)[:60]}" for k, v in args.items())
+            console.print(f"\n  [cyan]●[/cyan] [bold cyan]{name}[/bold cyan]({args_str})")
+            live.update(spinner)
+
+        def on_tool_result(name: str, result: str) -> None:
+            if name == "task_done":
+                return
+            lines = result.splitlines()
+            for line in lines[:4]:
+                console.print(f"  [dim]│[/dim] {line}")
+            if len(lines) > 4:
+                console.print(f"  [dim]│ … ({len(lines) - 4} more lines)[/dim]")
+            console.print()
+
+        agent.on_tool_call = on_tool_call
+        agent.on_tool_result = on_tool_result
+
+        result = agent.run(user_input, on_text_chunk=on_text_chunk)
+
+        if chunks:
+            live.update(Text("".join(chunks)))
+        elif result:
+            live.update(Text(result))
+
+    console.print()
 
 
 def main() -> None:
@@ -71,7 +99,7 @@ def main() -> None:
     model_label = settings.ollama.model if settings.backend == "ollama" else settings.backend
     console.print(Panel(
         f"[bold cyan]StandAlone LLM Agent[/bold cyan]  [dim]{model_label}[/dim]\n"
-        "[dim]'exit' または Ctrl+C で終了 | '/reset' で会話リセット[/dim]",
+        "[dim]Enter で改行 / Shift+Enter で送信 | '/reset' でリセット | 'exit' で終了[/dim]",
         border_style="cyan",
     ))
 
@@ -84,8 +112,6 @@ def main() -> None:
 
     agent = _make_agent(settings)
     session = _build_session()
-
-    console.print("[dim]Enter で改行 / Shift+Enter で送信[/dim]")
 
     while True:
         try:
@@ -104,14 +130,10 @@ def main() -> None:
             console.print("[dim]会話をリセットしました[/dim]")
             continue
 
-        console.print("[dim]Thinking...[/dim]")
         try:
-            result = agent.run(user_input)
+            _run_with_ui(agent, user_input)
         except Exception as e:
             console.print(f"[red]Error: {e}[/red]")
-            continue
-
-        console.print(f"\n[white]{result}[/white]")
 
 
 if __name__ == "__main__":

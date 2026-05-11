@@ -1,6 +1,6 @@
 from __future__ import annotations
 import json
-from typing import Any
+from typing import Any, Callable
 import httpx
 from agent.models import Message, ToolSchema, ChatResponse, ToolCall
 from backends.base import LLMBackend
@@ -86,6 +86,40 @@ class OllamaBackend(LLMBackend):
             tool_calls=tool_calls,
         )
         return ChatResponse(message=message, done=data.get("done", True))
+
+    def chat_stream(
+        self,
+        messages: list[Message],
+        tools: list[ToolSchema] | None = None,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> ChatResponse:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [self._to_dict(m) for m in messages],
+            "stream": True,
+            "options": {
+                "temperature": self.temperature,
+                "num_ctx": self.context_window,
+            },
+        }
+        if tools:
+            payload["tools"] = [t.model_dump() for t in tools]
+
+        final_data: dict[str, Any] = {}
+        with httpx.Client(timeout=300) as client:
+            with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    data = json.loads(line)
+                    chunk = data.get("message", {}).get("content", "")
+                    if chunk and on_chunk:
+                        on_chunk(chunk)
+                    if data.get("done"):
+                        final_data = data
+                        break
+        return self._parse_response(final_data)
 
     def is_available(self) -> bool:
         try:
