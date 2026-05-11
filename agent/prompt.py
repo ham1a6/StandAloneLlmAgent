@@ -21,9 +21,12 @@ You MUST use this exact format. Never output code blocks (```).
 
 # Rules
 - To create or write a file → call write_file (forbidden to output code blocks)
+- To run a multi-line script → ALWAYS write_file first, then bash to execute it.
+  Never use `python -c "..."` for scripts longer than one line.
 - To run a command → call bash
 - When the task is complete → call task_done
-- On error → read the output, fix the problem, retry
+- On error → read the output carefully, fix the root cause, then retry with a DIFFERENT approach.
+  Never call the exact same tool with the exact same arguments again.
 - Read files with read_file before editing them
 - Multiple independent operations can be called at the same time
 

@@ -7,6 +7,8 @@ from agent.models import Message, ToolSchema, ChatResponse, ToolCall
 from backends.base import LLMBackend
 
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
+# Qwen2.5 chat-template tokens that sometimes leak into content
+_TEMPLATE_TOKEN_RE = re.compile(r"<\|im_(start|end)\|>(\w+\n)?", re.DOTALL)
 
 
 class OllamaBackend(LLMBackend):
@@ -63,7 +65,9 @@ class OllamaBackend(LLMBackend):
 
     def _parse_response(self, data: dict[str, Any]) -> ChatResponse:
         msg_data = data.get("message", {})
-        content = msg_data.get("content") or None
+        raw = msg_data.get("content") or ""
+        # Strip leaked Qwen chat-template tokens (e.g. <|im_start|>user\n)
+        content = _TEMPLATE_TOKEN_RE.sub("", raw).strip() or None
 
         tool_calls: list[ToolCall] | None = None
 
