@@ -6,7 +6,6 @@ from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.text import Text
 from prompt_toolkit import PromptSession
-from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.formatted_text import HTML
 
 import tools  # noqa: F401 — must be imported before ToolDispatcher() to register all tools
@@ -19,17 +18,8 @@ console = Console()
 
 
 def _build_session() -> PromptSession:
-    kb = KeyBindings()
-
-    @kb.add("s-enter")
-    def _submit(event):
-        event.current_buffer.validate_and_handle()
-
     return PromptSession(
         message=HTML("<ansigreen><b>&gt;</b></ansigreen> "),
-        multiline=True,
-        key_bindings=kb,
-        prompt_continuation=lambda width, line_number, soft_wrap: "  ",
     )
 
 
@@ -89,6 +79,8 @@ def _run_with_ui(agent: Agent, user_input: str) -> None:
             live.update(Text("".join(chunks)))
         elif result:
             live.update(Text(result))
+        else:
+            live.update(Text("[dim](モデルからの応答がありませんでした)[/dim]"))
 
     console.print()
 
@@ -99,7 +91,7 @@ def main() -> None:
     model_label = settings.ollama.model if settings.backend == "ollama" else settings.backend
     console.print(Panel(
         f"[bold cyan]StandAlone LLM Agent[/bold cyan]  [dim]{model_label}[/dim]\n"
-        "[dim]Enter で改行 / Shift+Enter で送信 | '/reset' でリセット | 'exit' で終了[/dim]",
+        "[dim]Enter で送信 | '/reset' でリセット | 'exit' で終了[/dim]",
         border_style="cyan",
     ))
 

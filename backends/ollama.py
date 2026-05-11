@@ -80,6 +80,13 @@ class OllamaBackend(LLMBackend):
                     )
                 )
 
+        # Fallback: some Ollama versions return tool calls as JSON text in content
+        # instead of the structured tool_calls field. Parse them here.
+        if not tool_calls and content:
+            tool_calls = self._extract_text_tool_calls(content)
+            if tool_calls:
+                content = None
+
         message = Message(
             role=msg_data.get("role", "assistant"),
             content=content,
@@ -87,12 +94,58 @@ class OllamaBackend(LLMBackend):
         )
         return ChatResponse(message=message, done=data.get("done", True))
 
+    def _extract_text_tool_calls(self, text: str) -> list[ToolCall] | None:
+        """Parse tool calls embedded as JSON in content (Ollama <=0.3 / some model variants)."""
+        results: list[ToolCall] = []
+        # Strip markdown fences if present
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = "\n".join(cleaned.splitlines()[1:])
+            cleaned = cleaned.rsplit("```", 1)[0].strip()
+
+        # Split on lines — each line may be a separate JSON tool call
+        for i, line in enumerate(cleaned.splitlines()):
+            line = line.strip()
+            if not (line.startswith("{") and line.endswith("}")):
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            name = obj.get("name")
+            # Accept both {"arguments": ...} and {"parameters": ...}
+            args = obj.get("arguments") or obj.get("parameters") or {}
+            if not name or not isinstance(args, dict):
+                continue
+            results.append(ToolCall(id=f"call_{i}", name=name, arguments=args))
+
+        # Also try the entire cleaned block as one JSON object
+        if not results and cleaned.startswith("{") and cleaned.endswith("}"):
+            try:
+                obj = json.loads(cleaned)
+                name = obj.get("name")
+                args = obj.get("arguments") or obj.get("parameters") or {}
+                if name and isinstance(args, dict):
+                    results.append(ToolCall(id="call_0", name=name, arguments=args))
+            except json.JSONDecodeError:
+                pass
+
+        return results or None
+
     def chat_stream(
         self,
         messages: list[Message],
         tools: list[ToolSchema] | None = None,
         on_chunk: Callable[[str], None] | None = None,
     ) -> ChatResponse:
+        # When tools are provided, use non-streaming to avoid showing raw tool-call JSON
+        # as text — some Ollama versions embed tool calls in content rather than tool_calls.
+        if tools:
+            response = self.chat(messages, tools)
+            if on_chunk and response.message.content:
+                on_chunk(response.message.content)
+            return response
+
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [self._to_dict(m) for m in messages],
@@ -102,9 +155,8 @@ class OllamaBackend(LLMBackend):
                 "num_ctx": self.context_window,
             },
         }
-        if tools:
-            payload["tools"] = [t.model_dump() for t in tools]
 
+        accumulated: list[str] = []
         final_data: dict[str, Any] = {}
         with httpx.Client(timeout=300) as client:
             with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as response:
@@ -114,12 +166,18 @@ class OllamaBackend(LLMBackend):
                         continue
                     data = json.loads(line)
                     chunk = data.get("message", {}).get("content", "")
-                    if chunk and on_chunk:
-                        on_chunk(chunk)
+                    if chunk:
+                        accumulated.append(chunk)
+                        if on_chunk:
+                            on_chunk(chunk)
                     if data.get("done"):
                         final_data = data
                         break
-        return self._parse_response(final_data)
+
+        result = self._parse_response(final_data)
+        if not result.message.tool_calls and accumulated and not result.message.content:
+            result.message.content = "".join(accumulated)
+        return result
 
     def is_available(self) -> bool:
         try:

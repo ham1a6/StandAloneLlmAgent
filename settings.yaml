@@ -6,8 +6,8 @@ ollama:
   # LAN 内の別サーバー:         http://192.168.1.100:11434  ← インターネット不要
   # ※ クラウドサーバーはオフライン運用の対象外
   base_url: http://localhost:11434
-  # model: qwen2.5-coder:7b
-  model: llama3.1:8b
+  model: qwen2.5-coder:7b
+  # model: llama3.1:8b  # function calling 未対応のため非推奨
   temperature: 0.2
   context_window: 32768
 
