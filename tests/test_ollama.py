@@ -113,3 +113,38 @@ def test_is_available_false_on_exception():
     backend = OllamaBackend()
     with patch("backends.ollama.httpx.Client", side_effect=Exception("connection refused")):
         assert backend.is_available() is False
+
+
+def test_extract_tool_calls_multiline_json():
+    """モデルが複数行の pretty-printed JSON を出力したときもパースできること。"""
+    backend = OllamaBackend()
+    text = (
+        '{\n  "name": "write_file",\n  "arguments": {\n    "path": "tmp/a.py",\n    "content": "x=1"\n  }\n}\n\n'
+        '{\n  "name": "bash",\n  "arguments": {\n    "command": "python tmp/a.py"\n  }\n}'
+    )
+    tool_calls, remaining = backend._extract_tool_calls(text)
+    assert tool_calls is not None
+    assert len(tool_calls) == 2
+    assert tool_calls[0].name == "write_file"
+    assert tool_calls[0].arguments["path"] == "tmp/a.py"
+    assert tool_calls[1].name == "bash"
+    assert tool_calls[1].arguments["command"] == "python tmp/a.py"
+
+
+def test_extract_tool_calls_single_line_json():
+    """1行 JSON も引き続きパースできること。"""
+    backend = OllamaBackend()
+    text = '{"name": "read_file", "arguments": {"path": "foo.py"}}'
+    tool_calls, _ = backend._extract_tool_calls(text)
+    assert tool_calls is not None
+    assert tool_calls[0].name == "read_file"
+
+
+def test_extract_tool_calls_xml_format():
+    """<tool_call> XML フォーマットも引き続きパースできること。"""
+    backend = OllamaBackend()
+    text = '<tool_call>\n{"name": "glob", "arguments": {"pattern": "**/*.py"}}\n</tool_call>'
+    tool_calls, remaining = backend._extract_tool_calls(text)
+    assert tool_calls is not None
+    assert tool_calls[0].name == "glob"
+    assert remaining == ""

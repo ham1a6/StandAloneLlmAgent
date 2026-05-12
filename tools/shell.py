@@ -1,4 +1,5 @@
 import platform
+import shutil
 import subprocess
 import os
 import re
@@ -27,6 +28,8 @@ def _rewrite_python_subdir(command: str) -> str:
     return f'cd {directory} && {py_exe} {script}{args}'
 
 _IS_WINDOWS = platform.system() == "Windows"
+# pwsh (PowerShell 7+) supports && chain operators; powershell (5.x) does not.
+_PS_EXE = "pwsh" if _IS_WINDOWS and shutil.which("pwsh") else "powershell"
 _CWD_MARKER = "__AGENT_CWD__:"
 
 _cwd: str = os.getcwd()
@@ -79,7 +82,7 @@ def bash(command: str, timeout: int = 60) -> str:
                 f'Write-Output "`n{_CWD_MARKER}$((Get-Location).Path)"; '
                 f'exit $__e'
             )
-            args = ["powershell", "-NonInteractive", "-Command", wrapped]
+            args = [_PS_EXE, "-NonInteractive", "-Command", wrapped]
             result = subprocess.run(
                 args, capture_output=True, text=True, timeout=timeout, cwd=cwd,
             )

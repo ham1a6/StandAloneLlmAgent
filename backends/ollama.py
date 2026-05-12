@@ -127,38 +127,34 @@ class OllamaBackend(LLMBackend):
             cleaned = _TOOL_CALL_RE.sub("", text).strip()
             return results, cleaned
 
-        # Secondary: bare JSON lines {"name": ..., "arguments": ...}
+        # Secondary: scan for JSON objects (single-line or multi-line) using raw_decode.
+        # This handles both {"name":...} one-liners and pretty-printed multi-line objects.
         cleaned = text.strip()
         if cleaned.startswith("```"):
             cleaned = "\n".join(cleaned.splitlines()[1:])
             cleaned = cleaned.rsplit("```", 1)[0].strip()
 
-        for i, line in enumerate(cleaned.splitlines()):
-            line = line.strip()
-            if not (line.startswith("{") and line.endswith("}")):
-                continue
+        decoder = json.JSONDecoder()
+        idx = 0
+        call_idx = 0
+        while idx < len(cleaned):
+            start = cleaned.find("{", idx)
+            if start == -1:
+                break
             try:
-                obj = json.loads(line)
-                name = obj.get("name")
-                args = obj.get("arguments") or obj.get("parameters") or {}
-                if name and isinstance(args, dict):
-                    results.append(ToolCall(id=f"call_{i}", name=name, arguments=args))
+                obj, end_pos = decoder.raw_decode(cleaned, start)
+                if isinstance(obj, dict):
+                    name = obj.get("name")
+                    args = obj.get("arguments") or obj.get("parameters") or {}
+                    if name and isinstance(args, dict):
+                        results.append(ToolCall(id=f"call_{call_idx}", name=name, arguments=args))
+                        call_idx += 1
+                idx = end_pos
             except json.JSONDecodeError:
-                pass
+                idx = start + 1
 
         if results:
             return results, ""
-
-        # Tertiary: entire content is one JSON object
-        if cleaned.startswith("{") and cleaned.endswith("}"):
-            try:
-                obj = json.loads(cleaned)
-                name = obj.get("name")
-                args = obj.get("arguments") or obj.get("parameters") or {}
-                if name and isinstance(args, dict):
-                    return [ToolCall(id="call_0", name=name, arguments=args)], ""
-            except json.JSONDecodeError:
-                pass
 
         return None, text
 
